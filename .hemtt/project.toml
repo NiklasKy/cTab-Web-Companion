@@ -1,0 +1,16 @@
+name = "cTab Web Companion"
+prefix = "ctab_web"
+mainprefix = "z"
+author = "[GRP9] NiklasKy"
+
+[version]
+major = 1
+minor = 0
+patch = 0
+git_hash = 0
+
+[hemtt.check]
+pdrive = "disallow"
+
+[hemtt.build]
+pdrive = "disallow"

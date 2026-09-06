@@ -1,0 +1,15 @@
+name = "cTab Web Companion - Local Test";
+tooltip = "cTab Web Companion - Local Test";
+tooltipOwned = "cTab Web Companion - Local Test";
+overview = "Local unsigned test build with on-demand terrain maps and a tactical browser display.";
+author = "[GRP9] NiklasKy";
+picture = "mod.paa";
+logo = "mod.paa";
+logoOver = "mod.paa";
+logoSmall = "mod.paa";
+overviewPicture = "mod.paa";
+actionName = "";
+action = "";
+dlcColor[] = {0.843, 1.000, 0.392, 1};
+hideName = 0;
+hidePicture = 0;

@@ -1,0 +1,23 @@
+{
+  "name": "ctab-web-companion-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-FrontendTool.ps1 build",
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-FrontendTool.ps1 dev",
+    "test": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-FrontendTool.ps1 test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "leaflet": "1.9.4"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/leaflet": "1.9.22",
+    "jsdom": "26.1.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

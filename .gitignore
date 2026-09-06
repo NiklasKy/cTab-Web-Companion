@@ -1,0 +1,53 @@
+# Editors and operating system
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+config.local.*
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+.hemttout/
+build/
+dist/
+out/
+target/
+bin/
+obj/
+*.pbo
+*.bisign
+*.dll
+*.exe
+*.pdb
+
+# Runtime data
+cache/
+map-cache/
+logs/
+*.log
+
+# Test output
+coverage/
+test-results/
+
+# Local project documentation and source assets
+/docs/
+/data/*
+!/data/ctab companion Logo.paa
+!/data/ctab companion Logo.png
+
+# Signing secrets
+.hemttprivatekey
+*.biprivatekey
+*.pem
+*.pfx
+*.key

@@ -1,0 +1,15 @@
+name = "cTab Web Companion";
+tooltip = "cWEB - a read-only browser companion for cTab";
+tooltipOwned = "cWEB - a read-only browser companion for cTab";
+overview = "Mirrors locally visible cTab and Arma map data to a protected browser display on the same PC.";
+author = "[GRP9] NiklasKy";
+picture = "mod.paa";
+logo = "mod.paa";
+logoOver = "mod.paa";
+logoSmall = "mod.paa";
+overviewPicture = "mod.paa";
+actionName = "GitHub";
+action = "https://github.com/NiklasKy/cTab-Web-Companion";
+dlcColor[] = {0.965, 0.486, 0.102, 1};
+hideName = 0;
+hidePicture = 0;
