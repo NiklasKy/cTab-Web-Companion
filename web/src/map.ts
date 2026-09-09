@@ -53,7 +53,6 @@ export class TacticalMap {
     this.#onFollowPlayerChanged = onFollowPlayerChanged;
     this.#element.classList.add("map-muted");
     this.#map = this.#createMap(L.CRS.Simple, -5, 4);
-    this.#element.addEventListener("wheel", () => this.#setFollowingPlayer(false), { passive: true });
     this.#element.addEventListener("keydown", (event) => {
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "+", "-"].includes(event.key)) {
         this.#setFollowingPlayer(false);

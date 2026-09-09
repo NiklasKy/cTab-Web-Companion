@@ -1,6 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use ctab_web_protocol::{BridgeFrame, Envelope, MAX_FRAME_BYTES, TacticalMessage};
+use ctab_web_protocol::{BridgeFrame, BridgeMessage, Envelope, MAX_FRAME_BYTES, TacticalMessage};
 use std::collections::VecDeque;
 use std::ffi::{CStr, c_char, c_int};
 use std::fs::{File, OpenOptions};
@@ -99,7 +99,15 @@ impl BridgeService {
                         let companion_stopped = child.try_wait().ok().flatten().is_some();
                         if companion_stopped && restart_limiter.allow(Instant::now()) {
                             let current_session = replay.session_id.clone();
-                            let restart_browser = if new_session {
+                            let browser_requested = serde_json::from_slice::<BridgeFrame>(&payload)
+                                .ok()
+                                .is_some_and(|frame| {
+                                    matches!(frame.message, BridgeMessage::OpenBrowser {})
+                                });
+                            // The pending explicit request opens its own tab after replay.
+                            let restart_browser = if browser_requested {
+                                false
+                            } else if new_session {
                                 replacement_tab_session = None;
                                 open_browser
                             } else if current_session.is_some()
@@ -119,27 +127,7 @@ impl BridgeService {
                             ) {
                                 Ok(restarted) => {
                                     child = restarted;
-                                    let replay_result = replay.replay(&pipe_name);
-                                    let current_is_heartbeat =
-                                        serde_json::from_slice::<BridgeFrame>(&payload)
-                                            .ok()
-                                            .is_some_and(|frame| {
-                                                matches!(
-                                                    frame.envelope.message,
-                                                    TacticalMessage::Heartbeat(_)
-                                                )
-                                            });
-                                    let current_result =
-                                        if replay_result.is_ok() && current_is_heartbeat {
-                                            write_payload_with_retry(
-                                                &pipe_name,
-                                                &payload,
-                                                RESTART_CONNECT_TIMEOUT,
-                                            )
-                                        } else {
-                                            replay_result
-                                        };
-                                    if let Err(error) = current_result {
+                                    if let Err(error) = replay.replay(&pipe_name, &payload) {
                                         eprintln!("cTab Web bridge restart pipe error: {error}");
                                     }
                                 }
@@ -160,9 +148,17 @@ impl BridgeService {
         envelope
             .validate()
             .map_err(|error| BridgeError::InvalidPayload(error.to_string()))?;
+        self.enqueue_message(BridgeMessage::Publish { envelope })
+    }
+
+    pub fn request_browser_open(&self) -> Result<(), BridgeError> {
+        self.enqueue_message(BridgeMessage::OpenBrowser {})
+    }
+
+    fn enqueue_message(&self, message: BridgeMessage) -> Result<(), BridgeError> {
         let frame = BridgeFrame {
             pipe_token: self.pipe_token.clone(),
-            envelope,
+            message,
         };
         let payload = serde_json::to_vec(&frame)
             .map_err(|error| BridgeError::InvalidPayload(error.to_string()))?;
@@ -228,16 +224,18 @@ impl ReplayBuffer {
         let Ok(frame) = serde_json::from_slice::<BridgeFrame>(payload) else {
             return false;
         };
+        let BridgeMessage::Publish { envelope } = frame.message else {
+            return false;
+        };
         let mut new_session = false;
         let replay_frame = ReplayFrame {
-            sequence: frame.envelope.sequence,
+            sequence: envelope.sequence,
             payload: payload.to_vec(),
         };
-        match frame.envelope.message {
+        match envelope.message {
             TacticalMessage::SessionSnapshot(_) => {
-                new_session =
-                    self.session_id.as_deref() != Some(frame.envelope.session_id.as_str());
-                self.session_id = Some(frame.envelope.session_id.clone());
+                new_session = self.session_id.as_deref() != Some(envelope.session_id.as_str());
+                self.session_id = Some(envelope.session_id.clone());
                 self.snapshot = Some(replay_frame);
                 self.entities.clear();
                 self.positions.clear();
@@ -272,22 +270,48 @@ impl ReplayBuffer {
         new_session
     }
 
-    fn replay(&self, pipe_name: &str) -> io::Result<()> {
-        let Some(snapshot) = self.snapshot.as_ref() else {
+    fn recovery_payloads<'a>(&'a self, pending: &'a [u8]) -> io::Result<Vec<&'a [u8]>> {
+        let pending_frame: BridgeFrame = serde_json::from_slice(pending)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let browser_requested = matches!(pending_frame.message, BridgeMessage::OpenBrowser {});
+        if self.snapshot.is_none() && !browser_requested {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "no mission snapshot is available for recovery",
             ));
-        };
+        }
         let mut frames =
             Vec::with_capacity(self.markers.len() + self.entities.len() + self.positions.len() + 1);
-        frames.push(snapshot);
-        frames.extend(self.entities.iter());
-        frames.extend(self.positions.iter());
-        frames.extend(self.markers.iter());
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            frames.push(snapshot);
+            frames.extend(self.entities.iter());
+            frames.extend(self.positions.iter());
+            frames.extend(self.markers.iter());
+        }
         frames.sort_by_key(|frame| frame.sequence);
-        for frame in frames {
-            write_payload_with_retry(pipe_name, &frame.payload, RESTART_CONNECT_TIMEOUT)?;
+        let mut payloads: Vec<&[u8]> = frames
+            .iter()
+            .map(|frame| frame.payload.as_slice())
+            .collect();
+        // Heartbeats and one-shot controls are not retained in the replay buffer.
+        if matches!(
+            pending_frame.message,
+            BridgeMessage::OpenBrowser {}
+                | BridgeMessage::Publish {
+                    envelope: Envelope {
+                        message: TacticalMessage::Heartbeat(_),
+                        ..
+                    }
+                }
+        ) {
+            payloads.push(pending);
+        }
+        Ok(payloads)
+    }
+
+    fn replay(&self, pipe_name: &str, pending: &[u8]) -> io::Result<()> {
+        for payload in self.recovery_payloads(pending)? {
+            write_payload_with_retry(pipe_name, payload, RESTART_CONNECT_TIMEOUT)?;
         }
         Ok(())
     }
@@ -347,7 +371,7 @@ pub fn send_frame_to_pipe(
         .map_err(|error| BridgeError::InvalidPayload(error.to_string()))?;
     let payload = serde_json::to_vec(&BridgeFrame {
         pipe_token: pipe_token.to_owned(),
-        envelope,
+        message: BridgeMessage::Publish { envelope },
     })
     .map_err(|error| BridgeError::InvalidPayload(error.to_string()))?;
     if payload.len() > MAX_FRAME_BYTES {
@@ -460,6 +484,10 @@ fn dispatch(function: &str, arguments: &[String]) -> Result<String, BridgeError>
                 .map_err(|error| BridgeError::InvalidPayload(error.to_string()))?;
             ensure_started()?.enqueue(envelope)?;
             Ok(r#"{"ok":true,"status":"queued"}"#.to_owned())
+        }
+        "open_browser" => {
+            ensure_started()?.request_browser_open()?;
+            Ok(r#"{"ok":true,"status":"browser_open_requested"}"#.to_owned())
         }
         "version" => Ok(format!(r#"{{"ok":true,"version":"{VERSION}"}}"#)),
         _ => Err(BridgeError::InvalidPayload(
@@ -701,6 +729,94 @@ mod tests {
     }
 
     #[test]
+    fn browser_open_request_uses_the_authenticated_control_channel() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let service = BridgeService {
+            sender,
+            pipe_token: "a".repeat(64),
+        };
+
+        service
+            .request_browser_open()
+            .expect("enqueue browser-open request");
+
+        let payload = receiver.recv().expect("receive browser-open request");
+        let frame: BridgeFrame =
+            serde_json::from_slice(&payload).expect("decode browser-open request");
+        assert_eq!(frame.pipe_token, "a".repeat(64));
+        assert_eq!(frame.message, BridgeMessage::OpenBrowser {});
+    }
+
+    #[test]
+    fn recovery_delivers_browser_request_once_after_the_tactical_state() {
+        let mut replay = ReplayBuffer::default();
+        let encode = |message| {
+            serde_json::to_vec(&BridgeFrame {
+                pipe_token: "a".repeat(64),
+                message,
+            })
+            .expect("encode recovery frame")
+        };
+        let snapshot = encode(BridgeMessage::Publish {
+            envelope: synthetic_snapshot(),
+        });
+        let mut delta = synthetic_snapshot();
+        delta.sequence = 2;
+        delta.message = TacticalMessage::MarkerDelta(ctab_web_protocol::MarkerDelta {
+            updated: Vec::new(),
+            removed: vec!["marker-objective".to_owned()],
+        });
+        let delta = encode(BridgeMessage::Publish { envelope: delta });
+        let request = encode(BridgeMessage::OpenBrowser {});
+        replay.observe(&snapshot);
+        replay.observe(&delta);
+        assert!(!replay.observe(&request));
+
+        assert_eq!(
+            replay
+                .recovery_payloads(&request)
+                .expect("recover browser request"),
+            vec![snapshot.as_slice(), delta.as_slice(), request.as_slice()]
+        );
+        assert_eq!(
+            replay
+                .recovery_payloads(&delta)
+                .expect("recover tactical delta"),
+            vec![snapshot.as_slice(), delta.as_slice()]
+        );
+
+        let mut heartbeat = synthetic_snapshot();
+        heartbeat.sequence = 3;
+        heartbeat.message =
+            TacticalMessage::Heartbeat(ctab_web_protocol::Heartbeat { uptime_ms: 42.0 });
+        let heartbeat = encode(BridgeMessage::Publish {
+            envelope: heartbeat,
+        });
+        replay.observe(&heartbeat);
+        assert_eq!(
+            replay
+                .recovery_payloads(&heartbeat)
+                .expect("recover heartbeat"),
+            vec![snapshot.as_slice(), delta.as_slice(), heartbeat.as_slice()]
+        );
+    }
+
+    #[test]
+    fn browser_request_can_recover_before_a_snapshot_is_available() {
+        let request = serde_json::to_vec(&BridgeFrame {
+            pipe_token: "a".repeat(64),
+            message: BridgeMessage::OpenBrowser {},
+        })
+        .expect("encode browser request");
+        assert_eq!(
+            ReplayBuffer::default()
+                .recovery_payloads(&request)
+                .expect("recover browser request"),
+            vec![request.as_slice()]
+        );
+    }
+
+    #[test]
     fn restart_limiter_prevents_crash_loops_and_recovers_after_the_window() {
         let start = Instant::now();
         let mut limiter = RestartLimiter::default();
@@ -718,20 +834,22 @@ mod tests {
         let snapshot = synthetic_snapshot();
         let snapshot_payload = serde_json::to_vec(&BridgeFrame {
             pipe_token: "a".repeat(64),
-            envelope: snapshot,
+            message: BridgeMessage::Publish { envelope: snapshot },
         })
         .expect("encode snapshot frame");
         assert!(replay.observe(&snapshot_payload));
 
         let heartbeat_payload = serde_json::to_vec(&BridgeFrame {
             pipe_token: "a".repeat(64),
-            envelope: Envelope {
-                protocol_version: ctab_web_protocol::PROTOCOL_VERSION,
-                session_id: "phase1-session".to_owned(),
-                sequence: 2,
-                message: TacticalMessage::Heartbeat(ctab_web_protocol::Heartbeat {
-                    uptime_ms: 42.0,
-                }),
+            message: BridgeMessage::Publish {
+                envelope: Envelope {
+                    protocol_version: ctab_web_protocol::PROTOCOL_VERSION,
+                    session_id: "phase1-session".to_owned(),
+                    sequence: 2,
+                    message: TacticalMessage::Heartbeat(ctab_web_protocol::Heartbeat {
+                        uptime_ms: 42.0,
+                    }),
+                },
             },
         })
         .expect("encode heartbeat frame");
@@ -749,7 +867,9 @@ mod tests {
         next_session.session_id = "phase1-session-next".to_owned();
         let next_payload = serde_json::to_vec(&BridgeFrame {
             pipe_token: "a".repeat(64),
-            envelope: next_session,
+            message: BridgeMessage::Publish {
+                envelope: next_session,
+            },
         })
         .expect("encode next-session frame");
         assert!(replay.observe(&next_payload));

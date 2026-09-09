@@ -1,4 +1,4 @@
-# cTab Web Companion Local Test v35
+# cTab Web Companion Local Test v36
 
 This is an unsigned local development build. It is not a Workshop release and has not been approved by BattlEye.
 
@@ -6,7 +6,7 @@ This is an unsigned local development build. It is not a Workshop release and ha
 
 1. Close Arma 3 and any previous `ctab-web-companion.exe` process.
 2. Keep BattlEye disabled for this local editor smoke test.
-3. In the Arma 3 Launcher, add the complete `@cTab Web Companion Test v35` folder as a local mod.
+3. In the Arma 3 Launcher, add the complete `@cTab Web Companion Test v36` folder as a local mod.
 4. Confirm the Arma 3 Launcher displays the 512-pixel cWEB logo without a missing-picture warning.
 5. Enable either original `cTab` 2.2.2.1 or cTab Devastator Edition 2.3.0.0 together with this test mod, then start the 64-bit Arma 3 client.
 
@@ -16,6 +16,7 @@ This is an unsigned local development build. It is not a Workshop release and ha
 2. Wait up to ten seconds for the browser to open on a random `127.0.0.1` port.
 3. Confirm the page shows the real mission name, Altis, the local player plus locally available cTab BFT contacts, and `Live - localhost`.
 4. Confirm that the local player uses the blue own-position dot with a soft glow. Teleport or move the player; its position should update within approximately 250 milliseconds without refreshing.
+5. Enable player following, zoom in and out with the mouse wheel, and keep moving the player. Following must stay enabled and the map must continue tracking the player. Drag the map or press an arrow key over the map and confirm following turns off.
 6. Create several icon markers with text on the Arma map. Their original Arma symbols should appear in the browser within approximately one second. Black outlines and internal black details must remain black while white icon areas receive the selected marker color.
 7. Set markers to BLUFOR, OPFOR, Independent, Civilian, and Unknown side colors. Confirm that the browser shows blue, red, green, purple, and yellow instead of white.
 8. Edit a marker's position, direction, color, alpha, text, or size and confirm the browser follows the change.
@@ -38,6 +39,14 @@ This is an unsigned local development build. It is not a Workshop release and ha
 25. Confirm the system panel shows the detected cTab edition, terrain, bounded tile-cache usage, and last heartbeat age. Use **Copy diagnostics** and verify the copied text contains no mission name, unit names, marker text, coordinates, or session token.
 26. End the mission. The browser may remain open, but its localhost server must stop accepting connections after the 15-second heartbeat grace period.
 27. Start another mission without restarting Arma. The bridge must restart the companion and open the new protected localhost session automatically.
+
+## Pause Menu Browser Reopen
+
+1. Close the browser tab during a running mission, press Escape, and select **OPEN cWEB**. The default browser must reopen the current localhost session with live data.
+2. Close and reopen the pause menu several times. It must contain exactly one **OPEN cWEB** button, with no overlap with the vanilla controls at the tested UI scale.
+3. Repeat the browser reopen action. Each click must open one tab without resetting the mission state or revealing the browser token in the RPT.
+4. During a mission, terminate only the test companion process. Allow recovery, wait at least five seconds, terminate it again, and immediately select **OPEN cWEB**. If this action triggers recovery, it must still open exactly one tab even after the automatic replacement-tab allowance has been used.
+5. Repeat the menu checks with original cTab and Devastator Edition, including a multiplayer mission. Record any UI-scale or other-mod conflicts.
 
 ## Multiplayer Reconciliation
 

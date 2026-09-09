@@ -1,6 +1,15 @@
 /* Starts the live world, regular-marker, and supported-cTab export. */
 if (!hasInterface) exitWith {};
 
+private _pauseMenuHandler = [
+    missionNamespace,
+    "OnGameInterrupt",
+    {
+        _this call CTabWeb_fnc_addPauseMenuButton;
+    }
+] call BIS_fnc_addScriptedEventHandler;
+missionNamespace setVariable ["CTabWeb_pauseMenuHandler", _pauseMenuHandler];
+
 [] spawn {
     waitUntil {
         uiSleep 0.1;

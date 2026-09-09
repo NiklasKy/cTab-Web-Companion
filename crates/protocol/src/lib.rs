@@ -185,7 +185,15 @@ pub struct ErrorPayload {
 #[serde(deny_unknown_fields)]
 pub struct BridgeFrame {
     pub pipe_token: String,
-    pub envelope: Envelope,
+    pub message: BridgeMessage,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BridgeMessage {
+    Publish { envelope: Envelope },
+    // An empty struct variant enforces deny_unknown_fields for this command.
+    OpenBrowser {},
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -534,5 +542,34 @@ mod tests {
             message: TacticalMessage::Heartbeat(Heartbeat { uptime_ms: -1.0 }),
         };
         assert_eq!(envelope.validate(), Err(ValidationError::InvalidNumber));
+    }
+
+    #[test]
+    fn bridge_control_messages_round_trip_without_an_envelope() {
+        let frame = BridgeFrame {
+            pipe_token: "a".repeat(64),
+            message: BridgeMessage::OpenBrowser {},
+        };
+        let encoded = serde_json::to_string(&frame).expect("control frame should encode");
+        let decoded: BridgeFrame =
+            serde_json::from_str(&encoded).expect("control frame should decode");
+
+        assert_eq!(decoded, frame);
+        assert!(!encoded.contains("envelope"));
+    }
+
+    #[test]
+    fn bridge_control_messages_reject_extra_fields() {
+        for extra_field in ["url", "envelope", "unexpected"] {
+            let mut frame = serde_json::json!({
+                "pipe_token": "a".repeat(64),
+                "message": { "type": "open_browser" }
+            });
+            frame["message"][extra_field] = serde_json::json!("unexpected input");
+            assert!(
+                serde_json::from_value::<BridgeFrame>(frame).is_err(),
+                "browser controls must reject extra field: {extra_field}"
+            );
+        }
     }
 }

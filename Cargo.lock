@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "ctab-web-bridge"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "cc",
  "ctab-web-protocol",
@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "ctab-web-companion"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "axum",
  "ctab-web-bridge",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "ctab-web-protocol"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",

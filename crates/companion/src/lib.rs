@@ -17,7 +17,9 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use cache::{MARKER_CACHE_LIMIT_BYTES, TERRAIN_CACHE_LIMIT_BYTES};
-use ctab_web_protocol::{BridgeFrame, BrowserCommand, Envelope, MAX_FRAME_BYTES, TacticalMessage};
+use ctab_web_protocol::{
+    BridgeFrame, BridgeMessage, BrowserCommand, Envelope, MAX_FRAME_BYTES, TacticalMessage,
+};
 use futures_util::StreamExt;
 use marker_icons::{MarkerIconError, MarkerIconService};
 use rust_embed::RustEmbed;
@@ -142,6 +144,13 @@ struct StatusPayload {
 struct WebAssets;
 
 pub async fn start(options: CompanionOptions) -> Result<RunningCompanion, CompanionError> {
+    start_with_browser_opener(options, open_browser).await
+}
+
+async fn start_with_browser_opener(
+    options: CompanionOptions,
+    browser_opener: impl Fn(&str) -> std::io::Result<()> + Send + Sync + 'static,
+) -> Result<RunningCompanion, CompanionError> {
     validate_options(&options)?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
@@ -196,7 +205,8 @@ pub async fn start(options: CompanionOptions) -> Result<RunningCompanion, Compan
     let server_task = tokio::spawn(async move { axum::serve(listener, app).await });
     let pipe_name = options.pipe_name;
     let pipe_state = Arc::clone(&state);
-    let pipe_task = tokio::spawn(async move { pipe_server_loop(&pipe_name, pipe_state).await });
+    let pipe_task =
+        tokio::spawn(async move { pipe_server_loop(&pipe_name, pipe_state, browser_opener).await });
     let watchdog_task = tokio::spawn(async move { heartbeat_watchdog(state).await });
 
     Ok(RunningCompanion {
@@ -620,7 +630,11 @@ async fn send_envelope(socket: &mut WebSocket, envelope: &Envelope) -> Result<()
         .map_err(|_| ())
 }
 
-async fn pipe_server_loop(pipe_name: &str, state: Arc<AppState>) -> Result<(), CompanionError> {
+async fn pipe_server_loop(
+    pipe_name: &str,
+    state: Arc<AppState>,
+    browser_opener: impl Fn(&str) -> std::io::Result<()> + Send + Sync,
+) -> Result<(), CompanionError> {
     let mut first_instance = true;
     loop {
         let mut options = ServerOptions::new();
@@ -647,27 +661,34 @@ async fn pipe_server_loop(pipe_name: &str, state: Arc<AppState>) -> Result<(), C
             }
             let mut payload = vec![0_u8; length];
             pipe.read_exact(&mut payload).await?;
-            let Ok(mut frame) = serde_json::from_slice::<BridgeFrame>(&payload) else {
+            let Ok(frame) = serde_json::from_slice::<BridgeFrame>(&payload) else {
                 continue;
             };
-            if !constant_time_equal(&frame.pipe_token, &state.pipe_token)
-                || frame.envelope.validate().is_err()
-            {
+            if !constant_time_equal(&frame.pipe_token, &state.pipe_token) {
                 continue;
             }
-            canonicalize_envelope(&mut frame.envelope);
 
-            if accept_envelope(&state, &frame.envelope).await {
-                if matches!(frame.envelope.message, TacticalMessage::Heartbeat(_))
-                    && let Ok(mut last) = state.last_heartbeat.lock()
-                {
-                    *last = Some(Instant::now());
-                }
-                if matches!(frame.envelope.message, TacticalMessage::SessionSnapshot(_)) {
-                    open_browser_once(&state);
-                }
-                if !matches!(frame.envelope.message, TacticalMessage::Heartbeat(_)) {
-                    let _ = state.updates.send(frame.envelope);
+            match frame.message {
+                BridgeMessage::OpenBrowser {} => open_browser_now(&state, &browser_opener),
+                BridgeMessage::Publish { mut envelope } => {
+                    if envelope.validate().is_err() {
+                        continue;
+                    }
+                    canonicalize_envelope(&mut envelope);
+
+                    if accept_envelope(&state, &envelope).await {
+                        if matches!(&envelope.message, TacticalMessage::Heartbeat(_))
+                            && let Ok(mut last) = state.last_heartbeat.lock()
+                        {
+                            *last = Some(Instant::now());
+                        }
+                        if matches!(&envelope.message, TacticalMessage::SessionSnapshot(_)) {
+                            open_browser_once(&state, &browser_opener);
+                        }
+                        if !matches!(&envelope.message, TacticalMessage::Heartbeat(_)) {
+                            let _ = state.updates.send(envelope);
+                        }
+                    }
                 }
             }
         }
@@ -851,12 +872,21 @@ async fn accept_envelope(state: &AppState, envelope: &Envelope) -> bool {
     }
 }
 
-fn open_browser_once(state: &AppState) {
+fn open_browser_once(state: &AppState, browser_opener: &impl Fn(&str) -> std::io::Result<()>) {
     if !state.open_browser || state.browser_opened.swap(true, Ordering::AcqRel) {
         return;
     }
-    if let Err(error) = open_browser(&state.browser_url) {
+
+    open_browser_now(state, browser_opener);
+}
+
+fn open_browser_now(state: &AppState, browser_opener: &impl Fn(&str) -> std::io::Result<()>) {
+    state.browser_opened.store(true, Ordering::Release);
+    if let Err(error) = browser_opener(&state.browser_url) {
+        record_diagnostic(state, "browser_open_failed");
         eprintln!("cTab Web Companion could not open the browser: {error}");
+    } else {
+        record_diagnostic(state, "browser_opened");
     }
 }
 
@@ -1061,6 +1091,109 @@ mod tests {
     #[test]
     fn serves_the_embedded_brand_logo_as_png() {
         assert_eq!(content_type_for("grp9-logo.png"), "image/png");
+    }
+
+    #[tokio::test]
+    async fn browser_control_requires_pipe_auth_and_uses_only_the_current_local_url() {
+        let options = test_options("browser-control");
+        let pipe_name = options.pipe_name.clone();
+        let pipe_token = options.pipe_token.clone();
+        let (opened, mut requests) = tokio::sync::mpsc::unbounded_channel();
+        let runtime = start_with_browser_opener(options, move |url| {
+            opened.send(url.to_owned()).map_err(std::io::Error::other)
+        })
+        .await
+        .expect("start companion with a recording browser opener");
+        let expected_url = format!(
+            "http://{}/#token={}",
+            runtime.address, runtime.browser_token
+        );
+        let mut pipe = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match tokio::net::windows::named_pipe::ClientOptions::new().open(&pipe_name) {
+                    Ok(pipe) => break pipe,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(error) => panic!("connect to test pipe: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("test pipe becomes available");
+        let valid = serde_json::json!({
+            "pipe_token": pipe_token,
+            "message": { "type": "open_browser" }
+        });
+        let mut wrong_token = valid.clone();
+        wrong_token["pipe_token"] = serde_json::json!("b".repeat(64));
+        let mut browser_token = valid.clone();
+        browser_token["pipe_token"] = serde_json::json!(runtime.browser_token);
+        let mut supplied_url = valid.clone();
+        supplied_url["message"]["url"] = serde_json::json!("https://example.invalid/");
+
+        // All frames share one ordered connection.
+        for frame in [
+            wrong_token,
+            browser_token,
+            supplied_url,
+            valid.clone(),
+            valid,
+        ] {
+            let payload = serde_json::to_vec(&frame).expect("encode test frame");
+            pipe.write_u32_le(payload.len() as u32)
+                .await
+                .expect("write frame length");
+            pipe.write_all(&payload).await.expect("write frame payload");
+        }
+        // This diagnostic is a barrier proving that every earlier frame was processed.
+        pipe.write_u32_le(0).await.expect("write end-of-test frame");
+        for _ in 0..2 {
+            let actual_url = tokio::time::timeout(Duration::from_secs(3), requests.recv())
+                .await
+                .expect("browser request arrives")
+                .expect("browser opener remains available");
+            assert_eq!(actual_url, expected_url);
+        }
+        let status = tokio::time::timeout(Duration::from_secs(3), async {
+            let client = reqwest::Client::new();
+            loop {
+                let response = client
+                    .get(format!(
+                        "http://{}/status/{}",
+                        runtime.address, runtime.browser_token
+                    ))
+                    .send()
+                    .await
+                    .expect("fetch diagnostics")
+                    .bytes()
+                    .await
+                    .expect("read diagnostics");
+                let status: serde_json::Value =
+                    serde_json::from_slice(&response).expect("decode diagnostics");
+                if status["diagnostics"].as_array().is_some_and(|events| {
+                    events.last() == Some(&serde_json::json!("invalid_pipe_frame_rejected"))
+                }) {
+                    break status;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("all test frames are processed");
+        assert!(requests.try_recv().is_err());
+        assert_eq!(
+            status["diagnostics"],
+            serde_json::json!([
+                "companion_started",
+                "browser_opened",
+                "browser_opened",
+                "invalid_pipe_frame_rejected"
+            ])
+        );
+        assert!(status["update_age_ms"].is_null());
+        assert_eq!(status["edition"], "none");
+        runtime.stop();
     }
 
     #[tokio::test]

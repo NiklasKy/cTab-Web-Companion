@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import L from "leaflet";
 import {
   catalogDisplayMaxZoom,
   createArmaMarkerIcon,
@@ -224,22 +225,45 @@ describe("tactical map startup", () => {
       .toBe("rotate(90deg)");
   });
 
-  it("follows an available player and releases on manual map input", () => {
+  it("keeps tracking the player through real wheel zoom and releases on manual movement", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 404 })));
+    const createMap = vi.spyOn(L, "map");
     const element = document.createElement("div");
     document.body.append(element);
     const changes: boolean[] = [];
-    const map = new TacticalMap(element, "a".repeat(64), () => undefined, (following) => {
+    const statuses: TerrainStatus[] = [];
+    const map = new TacticalMap(element, "a".repeat(64), (status) => statuses.push(status), (following) => {
       changes.push(following);
     });
     map.render(snapshot);
+    await vi.waitFor(() => expect(statuses.at(-1)?.kind).toBe("fallback"));
+    const leafletMap = createMap.mock.results.at(-1)?.value as L.Map;
 
-    expect(map.setFollowPlayer(true)).toBe(true);
-    expect(map.isFollowingPlayer()).toBe(true);
-    element.dispatchEvent(new Event("wheel"));
+    try {
+      expect(map.setFollowPlayer(true)).toBe(true);
+      const previousZoom = leafletMap.getZoom();
+      element.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true }));
+      await vi.waitFor(() => expect(leafletMap.getZoom()).toBeLessThan(previousZoom));
 
-    expect(map.isFollowingPlayer()).toBe(false);
-    expect(changes).toEqual([true, false]);
+      expect(map.isFollowingPlayer()).toBe(true);
+      expect(changes).toEqual([true]);
+      const movedPlayer = { ...snapshot.entities[0]!, position: { x: 15_000, y: 17_000 } };
+      map.updatePositions({ ...snapshot, entities: [movedPlayer] });
+      expect(leafletMap.getCenter().lng).toBeCloseTo(movedPlayer.position.x);
+      expect(leafletMap.getCenter().lat).toBeCloseTo(movedPlayer.position.y);
+
+      element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+      expect(map.isFollowingPlayer()).toBe(false);
+      expect(changes).toEqual([true, false]);
+
+      map.setFollowPlayer(true);
+      leafletMap.fire("dragstart");
+      expect(map.isFollowingPlayer()).toBe(false);
+      expect(changes).toEqual([true, false, true, false]);
+    } finally {
+      leafletMap.remove();
+      createMap.mockRestore();
+    }
   });
 
   it("does not enable follow mode without an own-position entity", () => {

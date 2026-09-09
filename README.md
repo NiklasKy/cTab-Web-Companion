@@ -4,7 +4,7 @@ cTab Web Companion is a read-only Arma 3 client mod that mirrors cTab and regula
 
 ## Status
 
-Version 1.0.0 supports both original cTab 2.2.2.1 and cTab Devastator Edition 2.3.0.0 through one shared read-only adapter contract. It includes lifecycle heartbeats, automatic companion shutdown and bounded restart, safe cache limits, and non-tactical diagnostics alongside the live map and adapter implementation.
+Version 1.0.1 supports both original cTab 2.2.2.1 and cTab Devastator Edition 2.3.0.0 through one shared read-only adapter contract. It includes lifecycle heartbeats, automatic companion shutdown and bounded restart, safe cache limits, and non-tactical diagnostics alongside the live map and adapter implementation.
 
 The first edition targets:
 
@@ -27,7 +27,20 @@ Author: `[GRP9] NiklasKy`
 5. The browser opens when the player enters a mission.
 6. Terrain tiles are downloaded from PlanOps Atlas on demand and cached for later use. Terrains not available there remain usable with the coordinate-grid fallback.
 
+Use **OPEN cWEB** in the mission pause menu to reopen a closed browser tab.
+Player-follow mode stays active when zooming with the mouse wheel; dragging
+the map or moving it with the arrow keys releases player following.
+
 No separate shortcut, administrator installation, or manually started web server is intended.
+
+## Support
+
+For help with this mod, [join our Discord](https://discord.gg/C2adpmAsR9) and
+open a support ticket. This invite automatically assigns the Mod Support role,
+giving you access to the mod support area.
+
+Please include the mod name, version, and a description of the issue. Add
+screenshots or RPT logs when relevant.
 
 ## Developer Validation
 
@@ -59,8 +72,8 @@ Build the complete unsigned local test mod with:
 
 The command runs the project validation suite, then creates:
 
-- `build\@cTab Web Companion Test v35` for the Arma Launcher **Local mod** action
-- `build\cTab-Web-Companion-Test-v35.zip` as a portable copy of the same folder
+- `build\@cTab Web Companion Test v36` for the Arma Launcher **Local mod** action
+- `build\cTab-Web-Companion-Test-v36.zip` as a portable copy of the same folder
 
 The generated `README_TESTING.md` contains the editor, browser, RPT, and shutdown checklist. BattlEye must remain disabled for this unsigned development smoke test.
 
@@ -84,7 +97,7 @@ standard Program Files library, pass their directory explicitly:
 .\tools\Build-PublicMod.ps1 -SigningToolsDirectory "X:\SteamLibrary\steamapps\common\Arma 3 Tools\DSSignFile"
 ```
 
-The generated Publisher folder is `build\public\1.0.0\@cTab Web Companion`.
+The generated Publisher folder is `build\public\1.0.1\@cTab Web Companion`.
 PBO signature verification and BattlEye approval of the native binaries remain
 separate release checks.
 

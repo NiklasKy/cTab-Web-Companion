@@ -16,6 +16,10 @@ Load cWEB together with a supported cTab edition. The companion starts with
 Arma and opens the browser after the player enters a mission. Unsupported
 PlanOps terrains remain available through the coordinate-grid fallback.
 
+If you close the browser tab, select **OPEN cWEB** in the mission pause menu
+to reopen it. Mouse-wheel zoom keeps player-follow mode active. Dragging the
+map or moving it with the arrow keys releases player following.
+
 The browser listens only on localhost and uses a temporary session token. The
 display cannot edit the Arma or cTab map and does not expose a LAN service.
 
@@ -31,6 +35,13 @@ BattlEye-protected test server before advertising protected-server support.
 The deprecated 32-bit Arma extension is intentionally not included.
 
 ## Source and support
+
+For help with this mod, [join our Discord](https://discord.gg/C2adpmAsR9) and
+open a support ticket. This invite automatically assigns the Mod Support role,
+giving you access to the mod support area.
+
+Please include the mod name, version, and a description of the issue. Add
+screenshots or RPT logs when relevant.
 
 - Source: https://github.com/NiklasKy/cTab-Web-Companion
 - Issues: https://github.com/NiklasKy/cTab-Web-Companion/issues
