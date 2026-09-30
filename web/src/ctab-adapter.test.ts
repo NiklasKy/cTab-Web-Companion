@@ -4,6 +4,7 @@ import { parseTacticalEnvelope } from "./protocol";
 const editions = [
   {
     name: "Original cTab 2.2.2.1",
+    edition: "original",
     entityId: "ctab-original-unit:1:2",
     markerId: "ctab-original-user:17",
     markerType: "ctab_user_original_opfor_infantry_squad",
@@ -11,10 +12,25 @@ const editions = [
   },
   {
     name: "cTab Devastator Edition 2.3.0.0",
+    edition: "devastator",
     entityId: "ctab-devastator-unit:1:2",
     markerId: "ctab-devastator-user:17",
     markerType: "ctab_user_devastator_opfor_naval_squad",
     iconPath: "\\A3\\ui_f\\data\\map\\markers\\nato\\o_naval.paa"
+  },
+  {
+    name: "60th Solar AuxMod cTab",
+    edition: "solar_60th",
+    entityId: "ctab-solar_60th-unit:1:2",
+    markerId: "ctab-solar_60th-user:17",
+    markerType: "ctab_user_solar_60th_opfor_rifle_squad",
+    iconPath: JSON.stringify([
+      "ctab_mod_icon_v1",
+      "@60th_Solar_Detachment_Aux_Mod",
+      "0",
+      "7de4bd5c",
+      "\\z\\solar_60th\\addons\\equipment\\cTab\\img\\o_inf_rifle.paa"
+    ])
   }
 ] as const;
 
@@ -27,7 +43,7 @@ describe.each(editions)("shared adapter contract: $name", (edition) => {
       type: "session_snapshot",
       payload: {
         mission_name: "Adapter contract",
-        ctab_edition: "original",
+        ctab_edition: edition.edition,
         capabilities: { map: true, own_position: true, bft: true },
         terrain: { world_name: "Altis", display_name: "Altis", world_size: 30_720 },
         entities: [{
@@ -62,6 +78,7 @@ describe.each(editions)("shared adapter contract: $name", (edition) => {
 
     expect(envelope?.type).toBe("session_snapshot");
     if (envelope?.type !== "session_snapshot") throw new Error("fixture was rejected");
+    expect(envelope.payload.ctab_edition).toBe(edition.edition);
     expect(envelope.payload.entities[0]?.id).toBe(edition.entityId);
     expect(envelope.payload.markers[0]?.marker_type).toBe(edition.markerType);
   });

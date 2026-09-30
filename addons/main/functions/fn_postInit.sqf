@@ -24,6 +24,8 @@ missionNamespace setVariable ["CTabWeb_pauseMenuHandler", _pauseMenuHandler];
     missionNamespace setVariable ["CTabWeb_sequence", 0];
     missionNamespace setVariable ["CTabWeb_running", true];
     missionNamespace setVariable ["CTabWeb_snapshotInitialized", false];
+    missionNamespace setVariable ["CTabWeb_publishingSnapshot", false];
+    missionNamespace setVariable ["CTabWeb_lastAuthorityAt", -1];
     missionNamespace setVariable ["CTabWeb_entityState", createHashMap];
     missionNamespace setVariable ["CTabWeb_ctabEntityIds", []];
     missionNamespace setVariable ["CTabWeb_entityTombstones", []];
@@ -62,13 +64,18 @@ missionNamespace setVariable ["CTabWeb_pauseMenuHandler", _pauseMenuHandler];
         case "devastator": {
             diag_log "[cTab Web Companion] cTab Devastator Edition 2.3.0.0 adapter detected.";
         };
+        case "solar_60th": {
+            diag_log "[cTab Web Companion] 60th Solar AuxMod cTab adapter detected.";
+        };
         case "unsupported": {
-            private _ctabPatch = configFile >> "CfgPatches" >> "cTab";
+            private _patchName = ["cTab", "solar_60th_equipment_cTab"] select isClass (configFile >> "CfgPatches" >> "solar_60th_equipment_cTab");
+            private _ctabPatch = configFile >> "CfgPatches" >> _patchName;
             private _ctabVersion = getText (_ctabPatch >> "versionStr");
-            diag_log format ["[cTab Web Companion] Unsupported cTab edition detected: %1", _ctabVersion];
+            private _identity = [_patchName, format ["%1 %2", _patchName, _ctabVersion]] select (_ctabVersion isNotEqualTo "");
+            diag_log format ["[cTab Web Companion] Unsupported cTab provider detected: %1", _identity];
         };
         default {
-            diag_log "[cTab Web Companion] cTab adapter idle because no cTab CfgPatches entry is loaded.";
+            diag_log "[cTab Web Companion] cTab adapter idle because no supported cTab CfgPatches entry is loaded.";
         };
     };
 

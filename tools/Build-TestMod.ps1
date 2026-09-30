@@ -2,9 +2,9 @@
 param(
     [switch]$SkipValidation,
     [ValidatePattern('^@cTab Web Companion Test(?: v[0-9]+)?$')]
-    [string]$StageFolderName = "@cTab Web Companion Test v36",
+    [string]$StageFolderName = "@cTab Web Companion Test v39",
     [ValidatePattern('^cTab-Web-Companion-Test(?:-v[0-9]+)?\.zip$')]
-    [string]$ArchiveFileName = "cTab-Web-Companion-Test-v36.zip"
+    [string]$ArchiveFileName = "cTab-Web-Companion-Test-v39.zip"
 )
 
 Set-StrictMode -Version Latest
@@ -95,7 +95,7 @@ try {
     $manifest = [ordered]@{
         Product = "cTab Web Companion"
         Author = "[GRP9] NiklasKy"
-        Version = "1.0.1-test-v36"
+        Version = "1.0.3-test-v39"
         GeneratedAtUtc = [DateTime]::UtcNow.ToString("o")
         Signed = $false
         BattlEyeApproved = $false

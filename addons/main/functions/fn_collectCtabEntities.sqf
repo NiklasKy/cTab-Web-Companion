@@ -1,7 +1,7 @@
-/* Normalizes locally available BFT records from either supported cTab edition. */
+/* Normalizes locally available BFT records from supported cTab providers. */
 private _edition = missionNamespace getVariable ["CTabWeb_ctabEdition", ""];
 if (_edition isEqualTo "") then { _edition = call CTabWeb_fnc_detectCtabEdition; };
-if !(_edition in ["original", "devastator"]) exitWith { [] };
+if !(_edition in ["original", "devastator", "solar_60th"]) exitWith { [] };
 if (isNil "cTabBFTmembers" || { isNil "cTabBFTgroups" } || { isNil "cTabBFTvehicles" }) exitWith { [] };
 private _idNamespace = format ["ctab-%1", _edition];
 

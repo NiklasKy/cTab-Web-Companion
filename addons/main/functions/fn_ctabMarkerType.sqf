@@ -6,7 +6,13 @@ params [
     ["_fallbackId", 0, [0]]
 ];
 
-private _primary = switch (toLower _iconPath) do {
+private _normalizedIconPath = toLower _iconPath;
+private _solarIconPrefix = "\z\solar_60th\addons\equipment\ctab\img\";
+if ((_normalizedIconPath find _solarIconPrefix) isEqualTo 0) then {
+    _normalizedIconPath = "\ctab\img\" + (_normalizedIconPath select [count _solarIconPrefix]);
+};
+
+private _primary = switch (_normalizedIconPath) do {
     case "\a3\ui_f\data\map\markers\nato\o_inf.paa": { "opfor_infantry" };
     case "\a3\ui_f\data\map\markers\nato\o_mech_inf.paa": { "opfor_mechanized_infantry" };
     case "\a3\ui_f\data\map\markers\nato\o_motor_inf.paa": { "opfor_motorized_infantry" };

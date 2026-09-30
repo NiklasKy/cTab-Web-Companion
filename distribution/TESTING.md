@@ -1,4 +1,4 @@
-# cTab Web Companion Local Test v36
+# cTab Web Companion Local Test v39
 
 This is an unsigned local development build. It is not a Workshop release and has not been approved by BattlEye.
 
@@ -6,9 +6,9 @@ This is an unsigned local development build. It is not a Workshop release and ha
 
 1. Close Arma 3 and any previous `ctab-web-companion.exe` process.
 2. Keep BattlEye disabled for this local editor smoke test.
-3. In the Arma 3 Launcher, add the complete `@cTab Web Companion Test v36` folder as a local mod.
+3. In the Arma 3 Launcher, add the complete `@cTab Web Companion Test v39` folder as a local mod. Disable the Workshop copy and older cWEB test builds for this run.
 4. Confirm the Arma 3 Launcher displays the 512-pixel cWEB logo without a missing-picture warning.
-5. Enable either original `cTab` 2.2.2.1 or cTab Devastator Edition 2.3.0.0 together with this test mod, then start the 64-bit Arma 3 client.
+5. Enable original `cTab` 2.2.2.1, cTab Devastator Edition 2.3.0.0, or the 60th Solar Detachment AuxMod together with this test mod, then start the 64-bit Arma 3 client. Load only one cTab provider at a time.
 
 ## Live Mission Test
 
@@ -43,12 +43,25 @@ This is an unsigned local development build. It is not a Workshop release and ha
 ## Pause Menu Browser Reopen
 
 1. Close the browser tab during a running mission, press Escape, and select **OPEN cWEB**. The default browser must reopen the current localhost session with live data.
-2. Close and reopen the pause menu several times. It must contain exactly one **OPEN cWEB** button, with no overlap with the vanilla controls at the tested UI scale.
+2. Close and reopen the pause menu several times. It must contain exactly one **OPEN cWEB** button directly below **CONTINUE**, with no overlap with the vanilla controls at the tested UI scale. Expand and collapse **CONFIGURE**, return from an options dialog, and confirm the button returns below **CONTINUE** after the menu animation.
 3. Repeat the browser reopen action. Each click must open one tab without resetting the mission state or revealing the browser token in the RPT.
 4. During a mission, terminate only the test companion process. Allow recovery, wait at least five seconds, terminate it again, and immediately select **OPEN cWEB**. If this action triggers recovery, it must still open exactly one tab even after the automatic replacement-tab allowance has been used.
-5. Repeat the menu checks with original cTab and Devastator Edition, including a multiplayer mission. Record any UI-scale or other-mod conflicts.
+5. Repeat the menu checks with original cTab, Devastator Edition, and the 60th Solar AuxMod cTab provider, including a multiplayer mission. Record any UI-scale or other-mod conflicts.
 
 ## Multiplayer Reconciliation
+
+For the 1.0.3 regression check, edit the same icon label and position repeatedly,
+move a rectangle, and then delete both. Verify that old labels, positions,
+and outlines disappear. A missed delta should also be repaired by the next
+complete reconciliation, normally within 30 seconds plus collection time.
+Use a mission with hundreds of markers and refresh the browser: all markers
+must load, and subsequent edits and deletions must continue working.
+
+Close only the browser's WebSocket connection using developer tools, or let
+the computer suspend and resume. The page should reconnect on its own without
+F5. Retries back off to at most one attempt every ten seconds. If another
+freeze occurs, record whether map controls still respond and copy diagnostics
+before refreshing. Check the RPT for `Publish failed` and record the field name.
 
 1. Join a mission after other players have already placed regular Arma and cTab markers. Existing markers must appear within two seconds.
 2. Let two players create and delete cTab markers at the same time. The browser must converge to the state currently visible in cTab without stale duplicates.
@@ -75,6 +88,11 @@ Run these checks while the browser remains open. Each equipment change should ta
 3. If available, start a terrain whose Arma world name is a PlanOps alias. Confirm the canonical catalog map loads only when its world size matches the active Arma terrain.
 4. Start a terrain absent from PlanOps Atlas. Confirm the browser keeps the coordinate-grid fallback and does not request tiles from an unrelated host.
 5. On Kamino, Jabiim, and G.O.S N'Djenahoud, confirm the terrain image, coordinate grid, player, BFT entities, and markers share the same Arma-local `0..worldSize` coordinate space despite the non-zero PlanOps raster origin.
+6. On Vidda (`blud_vidda`, 12,288 metres), confirm the satellite map loads instead of the grid fallback. Compare player and marker positions with Arma, zoom across several levels, and reopen the browser to verify cached tiles. Atlas currently provides only a satellite layer for this terrain.
+
+When reporting a terrain failure, use **Copy diagnostics** and remove the Arma
+`-noLogs` launch option before collecting a new RPT. A startup-only RPT cannot
+show which companion version or mission terrain actually ran.
 
 Only validated heartbeat messages keep the companion alive. A repeated same-session failure can open at most one replacement tab; subsequent rate-limited recovery attempts remain silent. If a browser falls behind the live stream, it receives the current reconciled snapshot instead of silently dropping updates.
 
@@ -93,6 +111,15 @@ Expected lines:
 [cTab Web Companion] Original cTab 2.2.2.1 adapter detected.
 [cTab Web Companion] Initial live snapshot queued (... tracked entities, ... markers).
 ```
+
+With the 60th Solar AuxMod, the adapter line must instead be:
+
+```text
+[cTab Web Companion] 60th Solar AuxMod cTab adapter detected.
+```
+
+Create at least one 60th cTab user marker that uses an AuxMod texture and
+confirm that the real marker icon appears instead of only its text fallback.
 
 Record any nearby `callExtension`, missing-extension, script, or companion error exactly as written.
 

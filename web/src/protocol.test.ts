@@ -46,6 +46,12 @@ describe("snapshot parser", () => {
     expect(parseSnapshotEnvelope(fixture)?.payload.entities).toHaveLength(1);
   });
 
+  it("accepts the 60th Solar AuxMod cTab edition", () => {
+    const solarFixture = structuredClone(fixture);
+    solarFixture.payload.ctab_edition = "solar_60th";
+    expect(parseSnapshotEnvelope(solarFixture)?.payload.ctab_edition).toBe("solar_60th");
+  });
+
   it("rejects an unsupported protocol version", () => {
     expect(parseSnapshotEnvelope({ ...fixture, protocol_version: 99 })).toBeNull();
   });

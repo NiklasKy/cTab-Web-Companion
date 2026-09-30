@@ -2,6 +2,7 @@
 
 mod cache;
 mod marker_icons;
+mod stream;
 mod terrain;
 
 use axum::Router;
@@ -237,6 +238,7 @@ async fn companion_status(
                     ctab_web_protocol::CtabEdition::None => "none",
                     ctab_web_protocol::CtabEdition::Original => "original",
                     ctab_web_protocol::CtabEdition::Devastator => "devastator",
+                    ctab_web_protocol::CtabEdition::Solar60th => "solar_60th",
                     ctab_web_protocol::CtabEdition::Unsupported => "unsupported",
                 };
                 Some((edition, snapshot.terrain.display_name.clone()))
@@ -585,25 +587,42 @@ async fn websocket_session(mut socket: WebSocket, state: Arc<AppState>) {
     }
 
     let mut updates = state.updates.subscribe();
-    if let Some(snapshot) = state.current_snapshot.read().await.clone()
-        && send_envelope(&mut socket, &snapshot).await.is_err()
-    {
-        return;
+    let mut browser_sequence = 0;
+    let mut source_cursor: Option<(String, u64)> = None;
+    // Drop the state lock before waiting for a potentially slow browser.
+    let snapshot = state.current_snapshot.read().await.clone();
+    if let Some(snapshot) = snapshot {
+        source_cursor = Some((snapshot.session_id.clone(), snapshot.sequence));
+        if send_envelope(&mut socket, &snapshot, &mut browser_sequence)
+            .await
+            .is_err()
+        {
+            return;
+        }
     }
 
     loop {
         tokio::select! {
             update = updates.recv() => {
                 match update {
-                    Ok(envelope) if send_envelope(&mut socket, &envelope).await.is_err() => return,
-                    Ok(_) => {}
+                    Ok(envelope) => {
+                        if source_cursor.as_ref().is_some_and(|(session, sequence)| {
+                            *session == envelope.session_id && *sequence >= envelope.sequence
+                        }) { continue; }
+                        source_cursor = Some((envelope.session_id.clone(), envelope.sequence));
+                        if send_envelope(&mut socket, &envelope, &mut browser_sequence).await.is_err() {
+                            return;
+                        }
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         record_diagnostic(&state, "websocket_resynchronized");
+                        updates = state.updates.subscribe();
                         let snapshot = state.current_snapshot.read().await.clone();
-                        if let Some(snapshot) = snapshot
-                            && send_envelope(&mut socket, &snapshot).await.is_err()
-                        {
-                            return;
+                        if let Some(snapshot) = snapshot {
+                            source_cursor = Some((snapshot.session_id.clone(), snapshot.sequence));
+                            if send_envelope(&mut socket, &snapshot, &mut browser_sequence).await.is_err() {
+                                return;
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
@@ -622,12 +641,23 @@ async fn websocket_session(mut socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
-async fn send_envelope(socket: &mut WebSocket, envelope: &Envelope) -> Result<(), ()> {
-    let encoded = serde_json::to_string(envelope).map_err(|_| ())?;
-    socket
-        .send(Message::Text(encoded.into()))
+async fn send_envelope(
+    socket: &mut WebSocket,
+    envelope: &Envelope,
+    sequence: &mut u64,
+) -> Result<(), ()> {
+    let mut frames = stream::BrowserFrames::new(envelope.clone(), *sequence);
+    for encoded in frames.by_ref() {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            socket.send(Message::Text(encoded?.into())),
+        )
         .await
-        .map_err(|_| ())
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+    }
+    *sequence = frames.sequence;
+    Ok(())
 }
 
 async fn pipe_server_loop(
@@ -685,9 +715,9 @@ async fn pipe_server_loop(
                         if matches!(&envelope.message, TacticalMessage::SessionSnapshot(_)) {
                             open_browser_once(&state, &browser_opener);
                         }
-                        if !matches!(&envelope.message, TacticalMessage::Heartbeat(_)) {
-                            let _ = state.updates.send(envelope);
-                        }
+                        let _ = state.updates.send(envelope);
+                    } else {
+                        record_diagnostic(&state, "tactical_frame_rejected");
                     }
                 }
             }
@@ -1313,6 +1343,141 @@ mod tests {
             .expect("close response")
             .expect("close frame");
         assert!(matches!(response, ClientMessage::Close(_)));
+        runtime.stop();
+    }
+
+    #[tokio::test]
+    async fn large_marker_inventory_refresh_still_accepts_live_deletions() {
+        let options = test_options("large-refresh");
+        let pipe_name = options.pipe_name.clone();
+        let pipe_token = options.pipe_token.clone();
+        let runtime = start(options).await.expect("start companion");
+        let mut base = synthetic_snapshot();
+        let TacticalMessage::SessionSnapshot(snapshot) = &mut base.message else {
+            unreachable!()
+        };
+        let template = snapshot.markers.remove(0);
+        let mut frames = vec![base.clone()];
+        for chunk in 0..5 {
+            let mut delta = base.clone();
+            delta.sequence = chunk + 2;
+            delta.message = TacticalMessage::MarkerDelta(MarkerDelta {
+                updated: (0..128)
+                    .map(|index| {
+                        let mut marker = template.clone();
+                        marker.id = format!("marker-{}", chunk * 128 + index);
+                        marker.label = "x".repeat(400);
+                        marker
+                    })
+                    .collect(),
+                removed: Vec::new(),
+            });
+            frames.push(delta);
+        }
+        let mut heartbeat = base.clone();
+        heartbeat.sequence = 7;
+        heartbeat.message = TacticalMessage::Heartbeat(Heartbeat { uptime_ms: 42.0 });
+        frames.push(heartbeat);
+        let writer_pipe = pipe_name.clone();
+        let writer_token = pipe_token.clone();
+        tokio::task::spawn_blocking(move || {
+            for frame in frames {
+                send_frame_to_pipe(&writer_pipe, &writer_token, frame, Duration::from_secs(3))
+                    .expect("send inventory frame");
+            }
+        })
+        .await
+        .expect("writer task");
+        // The heartbeat is an acknowledgement that all preceding inventory frames were applied.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let response = reqwest::get(format!(
+                    "http://{}/status/{}",
+                    runtime.address, runtime.browser_token
+                ))
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+                let status: serde_json::Value = serde_json::from_slice(&response).unwrap();
+                if !status["update_age_ms"].is_null() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("inventory applied");
+
+        let mut request = format!("ws://{}/ws", runtime.address)
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            ORIGIN,
+            HeaderValue::from_str(&format!("http://{}", runtime.address)).unwrap(),
+        );
+        let (mut socket, _) = connect_async(request).await.unwrap();
+        socket
+            .send(ClientMessage::Text(
+                serde_json::json!({
+                    "type": "authenticate", "token": runtime.browser_token
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let mut ids = HashSet::new();
+        let mut last_sequence = 0;
+        while ids.len() < 640 {
+            let message = tokio::time::timeout(Duration::from_secs(3), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let ClientMessage::Text(text) = message else {
+                panic!("expected inventory frame")
+            };
+            assert!(text.len() <= MAX_FRAME_BYTES);
+            let envelope: Envelope = serde_json::from_str(&text).unwrap();
+            assert!(envelope.sequence > last_sequence);
+            last_sequence = envelope.sequence;
+            match envelope.message {
+                TacticalMessage::SessionSnapshot(snapshot) => {
+                    ids.extend(snapshot.markers.into_iter().map(|marker| marker.id))
+                }
+                TacticalMessage::MarkerDelta(delta) => {
+                    ids.extend(delta.updated.into_iter().map(|marker| marker.id))
+                }
+                _ => panic!("unexpected inventory frame"),
+            }
+        }
+        let mut removal = base;
+        removal.sequence = 8;
+        removal.message = TacticalMessage::MarkerDelta(MarkerDelta {
+            updated: Vec::new(),
+            removed: vec!["marker-0".to_owned()],
+        });
+        tokio::task::spawn_blocking(move || {
+            send_frame_to_pipe(&pipe_name, &pipe_token, removal, Duration::from_secs(3)).unwrap();
+        })
+        .await
+        .unwrap();
+        let message = tokio::time::timeout(Duration::from_secs(3), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let ClientMessage::Text(text) = message else {
+            panic!("expected live removal")
+        };
+        let envelope: Envelope = serde_json::from_str(&text).unwrap();
+        assert!(envelope.sequence > last_sequence);
+        let TacticalMessage::MarkerDelta(delta) = envelope.message else {
+            panic!("expected marker delta")
+        };
+        assert_eq!(delta.removed, vec!["marker-0"]);
         runtime.stop();
     }
 

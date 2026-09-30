@@ -251,11 +251,13 @@ impl TerrainService {
         let layer = catalog
             .layers
             .into_iter()
-            .find(|layer| {
-                layer.is_default
-                    && layer.layer_type == "Topographic"
+            .filter(|layer| {
+                matches!(layer.layer_type.as_str(), "Topographic" | "Satellite")
                     && matches!(layer.format.as_str(), "PngOnly" | "PngAndWebp")
             })
+            // Prefer topographic maps, but accept satellite-only terrains such as Vidda.
+            // Within either type, prefer the provider's default layer.
+            .min_by_key(|layer| (layer.layer_type != "Topographic", !layer.is_default))
             .ok_or(TerrainError::InvalidCatalogData)?;
         let attribution = catalog
             .attribution
@@ -646,6 +648,104 @@ mod tests {
     }
 
     #[test]
+    fn accepts_vidda_satellite_metadata_without_a_topographic_layer() {
+        let cache = TempDir::new().expect("temporary cache");
+        let service = TerrainService::with_origins(
+            cache.path().to_owned(),
+            vec![PRIMARY_ORIGIN.to_owned()],
+            false,
+            Duration::from_secs(1),
+        )
+        .expect("terrain service");
+        let request = terrain_request("blud_vidda", 12_288.0).expect("Vidda request");
+        let mut catalog = catalog_map("blud_vidda", &[], 12_288.0);
+        catalog.game_map_id = 10;
+        catalog.english_title = "Vidda".to_owned();
+        catalog.origin_y = -7_168.0;
+        let layer = &mut catalog.layers[0];
+        layer.game_map_layer_id = 10;
+        layer.layer_type = "Satellite".to_owned();
+        layer.format = "PngAndWebp".to_owned();
+        layer.tile_size = 291;
+        layer.max_zoom = 5;
+        layer.factor_x = 0.023625;
+        layer.factor_y = 0.023625;
+
+        let metadata = service
+            .catalog_metadata(catalog, &request, None)
+            .expect("satellite-only terrain is supported");
+        assert_eq!(metadata.catalog_name, "blud_vidda");
+        assert_eq!(metadata.layer_id, 10);
+        assert_eq!(metadata.size_in_meters, 12_288.0);
+        assert_eq!(metadata.origin_y, -7_168.0);
+        assert_eq!(metadata.tile_size, 291);
+        assert_eq!(metadata.factor_x, 0.023625);
+        assert_eq!(metadata.factor_y, 0.023625);
+        assert!(validate_tile_coordinate(&metadata, 2, 3, 3).is_ok());
+        assert!(validate_tile_coordinate(&metadata, 2, 4, 0).is_err());
+    }
+
+    #[test]
+    fn prefers_topographic_layers_and_the_default_within_each_supported_type() {
+        let cache = TempDir::new().expect("temporary cache");
+        let service = TerrainService::with_origins(
+            cache.path().to_owned(),
+            vec![PRIMARY_ORIGIN.to_owned()],
+            false,
+            Duration::from_secs(1),
+        )
+        .expect("terrain service");
+        let request = terrain_request("example", 10_240.0).expect("request");
+        for expected_id in [4, 3, 2] {
+            let mut catalog = catalog_map("example", &[], 10_240.0);
+            catalog.layers.clear();
+            for (id, layer_type, is_default) in [
+                (1, "Satellite", false),
+                (2, "Satellite", true),
+                (3, "Topographic", false),
+                (4, "Topographic", true),
+            ] {
+                if layer_type == "Topographic" && (expected_id == 2 || id > expected_id) {
+                    continue;
+                }
+                let mut layer = catalog_map("example", &[], 10_240.0).layers.remove(0);
+                layer.game_map_layer_id = id;
+                layer.layer_type = layer_type.to_owned();
+                layer.is_default = is_default;
+                catalog.layers.push(layer);
+            }
+            let metadata = service.catalog_metadata(catalog, &request, None).unwrap();
+            assert_eq!(metadata.layer_id, expected_id);
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_layer_types_and_non_png_formats() {
+        let cache = TempDir::new().expect("temporary cache");
+        let service = TerrainService::with_origins(
+            cache.path().to_owned(),
+            vec![PRIMARY_ORIGIN.to_owned()],
+            false,
+            Duration::from_secs(1),
+        )
+        .expect("terrain service");
+        let request = terrain_request("example", 10_240.0).expect("request");
+        for (layer_type, format) in [
+            ("Satellite", "WebpOnly"),
+            ("Topographic", "Unknown"),
+            ("Elevation", "PngOnly"),
+        ] {
+            let mut catalog = catalog_map("example", &[], 10_240.0);
+            catalog.layers[0].layer_type = layer_type.to_owned();
+            catalog.layers[0].format = format.to_owned();
+            assert!(matches!(
+                service.catalog_metadata(catalog, &request, None),
+                Err(TerrainError::InvalidCatalogData)
+            ));
+        }
+    }
+
+    #[test]
     fn rejects_unknown_or_non_https_provider_origins() {
         assert!(valid_provider_origin(PRIMARY_ORIGIN, false));
         assert!(valid_provider_origin(MIRROR_ORIGIN, false));
@@ -801,13 +901,23 @@ mod tests {
             .metadata("vtf_lybor_winter", 6_144.0)
             .await
             .expect("aliased Lybor metadata");
+        let vidda_metadata = online
+            .metadata("blud_vidda", 12_288.0)
+            .await
+            .expect("satellite-only Vidda metadata");
+        let vidda_tile = online
+            .tile("blud_vidda", 12_288.0, 2, 1, 1)
+            .await
+            .expect("Vidda satellite tile");
         assert_eq!(altis_metadata.size_in_meters, 30_720.0);
         assert_eq!(lythium_metadata.size_in_meters, 20_480.0);
         assert_eq!(anizay_metadata.catalog_name, "tem_anizay");
         assert_eq!(lybor_winter_metadata.catalog_name, "vtf_lybor");
+        assert_eq!(vidda_metadata.catalog_name, "blud_vidda");
         assert!(valid_png(&altis_tile, altis_metadata.tile_size));
         assert!(valid_png(&lythium_tile, lythium_metadata.tile_size));
         assert!(valid_png(&anizay_tile, anizay_metadata.tile_size));
+        assert!(valid_png(&vidda_tile, vidda_metadata.tile_size));
 
         let offline = TerrainService::with_origins(
             cache.path().to_owned(),
@@ -864,6 +974,20 @@ mod tests {
                 .await
                 .expect("cached aliased Lybor metadata"),
             lybor_winter_metadata
+        );
+        assert_eq!(
+            offline
+                .metadata("blud_vidda", 12_288.0)
+                .await
+                .expect("cached Vidda metadata"),
+            vidda_metadata
+        );
+        assert_eq!(
+            offline
+                .tile("blud_vidda", 12_288.0, 2, 1, 1)
+                .await
+                .expect("cached Vidda satellite tile"),
+            vidda_tile
         );
     }
 }

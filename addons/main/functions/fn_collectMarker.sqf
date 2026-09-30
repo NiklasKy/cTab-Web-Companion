@@ -6,11 +6,21 @@ if (
     || { !_knownVisible && { !(_marker in allMapMarkers) } }
 ) exitWith { nil };
 
-private _shape = toLower markerShape _marker;
-if !(_shape in ["icon", "rectangle", "ellipse", "polyline"]) then { _shape = "icon"; };
-private _position = markerPos _marker;
-private _size = markerSize _marker;
-private _markerType = markerType _marker;
+/* A marker may disappear after allMapMarkers was copied. Read its engine fields together. */
+private _fields = [];
+isNil {
+    private _shape = toLower markerShape _marker;
+    if (_shape in ["icon", "rectangle", "ellipse", "polyline"]) then {
+        _fields = [
+            _shape, markerPos _marker, markerSize _marker, markerType _marker,
+            markerColor _marker, markerText _marker, markerDir _marker, markerAlpha _marker,
+            markerBrush _marker, markerChannel _marker,
+            if (_shape isEqualTo "polyline") then { markerPolyline _marker } else { [] }
+        ];
+    };
+};
+if (_fields isEqualTo []) exitWith { nil };
+_fields params ["_shape", "_position", "_size", "_markerType", "_markerColor", "_text", "_direction", "_alpha", "_brush", "_channel", "_rawPolyline"];
 private _markerConfig = configFile >> "CfgMarkers" >> _markerType;
 private _iconPath = if (_markerType isEqualTo "") then { "" } else {
     getText (_markerConfig >> "icon")
@@ -35,7 +45,6 @@ if (_iconPath isNotEqualTo "" && { !_isBaseGamePath }) then {
         };
     };
 };
-private _markerColor = markerColor _marker;
 private _exportColor = _markerColor;
 if ((_markerColor select [0, 1]) isNotEqualTo "#") then {
     private _colorConfig = if ((toLower _markerColor) in ["", "default"]) then {
@@ -51,7 +60,6 @@ if ((_markerColor select [0, 1]) isNotEqualTo "#") then {
         _exportColor = [_rgba, _markerColor] call CTabWeb_fnc_colorToHex;
     };
 };
-private _rawPolyline = if (_shape isEqualTo "polyline") then { markerPolyline _marker } else { [] };
 private _polyline = [];
 for "_index" from 0 to ((count _rawPolyline) - 2) step 2 do {
     _polyline pushBack createHashMapFromArray [
@@ -62,17 +70,17 @@ for "_index" from 0 to ((count _rawPolyline) - 2) step 2 do {
 
 createHashMapFromArray [
     ["id", _marker],
-    ["label", (markerText _marker) select [0, 512]],
+    ["label", _text select [0, 512]],
     ["kind", _shape],
     ["position", createHashMapFromArray [["x", _position select 0], ["y", _position select 1]]],
-    ["direction", markerDir _marker],
+    ["direction", _direction],
     ["color", _exportColor],
-    ["alpha", markerAlpha _marker],
+    ["alpha", _alpha],
     ["marker_type", _markerType select [0, 512]],
     ["icon_path", _iconPath select [0, 512]],
     ["overlay_icon_path", ""],
-    ["brush", (markerBrush _marker) select [0, 512]],
+    ["brush", _brush select [0, 512]],
     ["size", createHashMapFromArray [["x", _size select 0], ["y", _size select 1]]],
     ["polyline", _polyline],
-    ["channel", markerChannel _marker]
+    ["channel", _channel]
 ]

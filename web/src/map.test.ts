@@ -282,6 +282,25 @@ describe("tactical map startup", () => {
 });
 
 describe("tactical label hierarchy", () => {
+  it("measures all labels before changing collision visibility", () => {
+    const root = document.createElement("div");
+    const labels = Array.from({ length: 3 }, (_, index) => {
+      const label = document.createElement("span");
+      label.dataset.tacticalLabelPriority = "200";
+      label.dataset.tacticalLabelKey = String(index);
+      root.append(label);
+      return label;
+    });
+    for (const label of labels) {
+      vi.spyOn(label, "getBoundingClientRect").mockImplementation(() => {
+        expect(labels.every((item) => !item.classList.contains("tactical-label-collision-hidden"))).toBe(true);
+        return { left: 0, top: 0, right: 100, bottom: 25, width: 100, height: 25, x: 0, y: 0, toJSON: () => ({}) };
+      });
+    }
+    resolveTacticalLabelCollisions(root);
+    expect(labels.filter((label) => label.classList.contains("tactical-label-collision-hidden"))).toHaveLength(2);
+  });
+
   it("allows more partial label overlap while zoomed out", () => {
     expect(labelCollisionThresholdForZoom(1))
       .toBeGreaterThan(labelCollisionThresholdForZoom(6));
@@ -472,6 +491,27 @@ describe("Arma marker icons", () => {
       .toContain(`/marker-icon/${token}/ctab_user_devastator_opfor_naval_none?v=`);
   });
 
+  it("requests a 60th Solar cTab texture through the loaded-mod icon route", () => {
+    const solarMarker: TacticalMarker = {
+      ...marker,
+      id: "ctab-solar_60th-user:17",
+      marker_type: "ctab_user_solar_60th_opfor_rifle_squad",
+      icon_path: JSON.stringify([
+        "ctab_mod_icon_v1",
+        "@60th_Solar_Detachment_Aux_Mod",
+        "0",
+        "7de4bd5c",
+        "\\z\\solar_60th\\addons\\equipment\\cTab\\img\\o_inf_rifle.paa"
+      ])
+    };
+    const token = "f".repeat(64);
+    const icon = createArmaMarkerIcon(solarMarker, token);
+    const root = icon.options.html as HTMLElement;
+
+    expect(root.querySelector<HTMLImageElement>(".arma-marker-texture")?.src)
+      .toContain(`/marker-icon/${token}/ctab_user_solar_60th_opfor_rifle_squad?v=`);
+  });
+
   it("uses crossed swords instead of a circular fallback for loc_Attack", () => {
     const attack: TacticalMarker = {
       ...marker,
@@ -504,6 +544,36 @@ describe("Arma marker icons", () => {
 
     map.render({ ...withMarker, markers: [] });
     expect(element.querySelector(".arma-marker-icon")).toBeNull();
+  });
+
+  it("replaces moved and renamed markers and removes their symbols, area outlines, and labels", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 404 })));
+    const createMap = vi.spyOn(L, "map");
+    const element = document.createElement("div");
+    document.body.append(element);
+    const statuses: TerrainStatus[] = [];
+    const map = new TacticalMap(element, "a".repeat(64), (value) => statuses.push(value));
+    let current = { ...snapshot, markers: [marker, { ...marker, id: "area", kind: "rectangle" as const, label: "Old area" }] };
+    map.render(current);
+    await vi.waitFor(() => expect(statuses.at(-1)?.kind).toBe("fallback"));
+    const leafletMap = createMap.mock.results.at(-1)?.value as L.Map;
+    try {
+      for (let index = 0; index < 30; index++) {
+        current = { ...current, markers: current.markers.map((item) => ({
+          ...item, label: `Updated ${item.id} ${index}`, position: { x: 1000 + index * 10, y: 2000 }
+        })) };
+        map.updateMarkers(current);
+        expect(element.querySelectorAll(".arma-marker-icon")).toHaveLength(1);
+        expect(element.querySelectorAll(".arma-marker-label")).toHaveLength(2);
+        expect(element.textContent).not.toContain("Old area");
+      }
+      // An authoritative checkpoint also removes records whose deletion delta was missed.
+      map.render({ ...current, markers: [] });
+      expect(element.querySelectorAll(".arma-marker-icon, .arma-marker-label")).toHaveLength(0);
+      const polygons: L.Polygon[] = [];
+      leafletMap.eachLayer((layer) => { if (layer instanceof L.Polygon) polygons.push(layer); });
+      expect(polygons).toHaveLength(1); // Only the fallback terrain boundary remains.
+    } finally { leafletMap.remove(); createMap.mockRestore(); }
   });
 
   it("uses an explicit semantic fallback for Devastator-only cTab textures", () => {

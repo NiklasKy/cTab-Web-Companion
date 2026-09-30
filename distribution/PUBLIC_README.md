@@ -6,7 +6,8 @@ regular Arma map data to a protected browser display on the same Windows PC.
 ## Requirements
 
 - 64-bit Arma 3 on Windows
-- cTab 2.2.2.1 or cTab Devastator Edition 2.3.0.0
+- cTab 2.2.2.1, cTab Devastator Edition 2.3.0.0, or the cTab provider
+  integrated into the 60th Solar Detachment AuxMod
 - A modern default browser
 - Internet access for uncached PlanOps Atlas terrain tiles
 
@@ -19,6 +20,9 @@ PlanOps terrains remain available through the coordinate-grid fallback.
 If you close the browser tab, select **OPEN cWEB** in the mission pause menu
 to reopen it. Mouse-wheel zoom keeps player-follow mode active. Dragging the
 map or moving it with the arrow keys releases player following.
+
+The page reconnects automatically after a temporary local connection interruption.
+Marker edits and deletions are also checked against periodic complete map updates.
 
 The browser listens only on localhost and uses a temporary session token. The
 display cannot edit the Arma or cTab map and does not expose a LAN service.

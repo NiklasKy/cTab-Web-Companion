@@ -1,8 +1,34 @@
-/* Normalizes locally visible user markers from either supported cTab edition. */
+/* Normalizes locally visible user markers from supported cTab providers. */
 private _edition = missionNamespace getVariable ["CTabWeb_ctabEdition", ""];
 if (_edition isEqualTo "") then { _edition = call CTabWeb_fnc_detectCtabEdition; };
-if !(_edition in ["original", "devastator"]) exitWith { [] };
+if !(_edition in ["original", "devastator", "solar_60th"]) exitWith { [] };
 if (isNil "cTabUserMarkerList") exitWith { [] };
+
+private _patchName = ["cTab", "solar_60th_equipment_cTab"] select (_edition isEqualTo "solar_60th");
+private _sourceMod = configSourceMod (configFile >> "CfgPatches" >> _patchName);
+private _modLookup = missionNamespace getVariable ["CTabWeb_loadedModLookup", createHashMap];
+private _modIdentity = _modLookup getOrDefault [toLower _sourceMod, ["0", ""]];
+private _exportIconPath = {
+    params [["_path", "", [""]]];
+    private _pathLower = toLower _path;
+    private _isBaseGamePath = (_pathLower find "\a3\") isEqualTo 0
+        || { (_pathLower find "a3\") isEqualTo 0 };
+    if (
+        _path isEqualTo ""
+        || { _isBaseGamePath }
+        || { _sourceMod isEqualTo "" }
+        || { count _sourceMod > 128 }
+    ) exitWith { _path };
+
+    private _descriptor = toJSON [
+        "ctab_mod_icon_v1",
+        _sourceMod,
+        _modIdentity param [0, "0", [""]],
+        _modIdentity param [1, "", [""]],
+        _path
+    ];
+    [_path, _descriptor] select (count _descriptor <= 512)
+};
 
 private _markers = [];
 {
@@ -37,6 +63,8 @@ private _markers = [];
                 private _direction = [0, _reportedDirection] select (_reportedDirection >= 0 && { _reportedDirection < 360 });
                 private _id = format ["ctab-%1-user:%2", _edition, _transactionId];
                 private _markerType = [_edition, _iconPath, _overlayPath, _transactionId] call CTabWeb_fnc_ctabMarkerType;
+                _iconPath = [_iconPath] call _exportIconPath;
+                _overlayPath = [_overlayPath] call _exportIconPath;
                 _markers pushBack createHashMapFromArray [
                     ["id", _id],
                     ["label", _label select [0, 512]],

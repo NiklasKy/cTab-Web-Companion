@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use windows_sys::Win32::Foundation::HMODULE;
+use windows_sys::Win32::Foundation::{ERROR_PIPE_BUSY, HMODULE};
 use windows_sys::Win32::System::LibraryLoader::{
     GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
     GetModuleFileNameW, GetModuleHandleExW,
@@ -388,12 +388,13 @@ fn write_payload_with_retry(pipe_name: &str, payload: &[u8], timeout: Duration) 
             Ok(mut pipe) => return write_framed(&mut pipe, payload),
             Err(error)
                 if started.elapsed() < timeout
-                    && matches!(
-                        error.kind(),
-                        io::ErrorKind::NotFound
-                            | io::ErrorKind::WouldBlock
-                            | io::ErrorKind::PermissionDenied
-                    ) =>
+                    && (error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
+                        || matches!(
+                            error.kind(),
+                            io::ErrorKind::NotFound
+                                | io::ErrorKind::WouldBlock
+                                | io::ErrorKind::PermissionDenied
+                        )) =>
             {
                 thread::sleep(Duration::from_millis(25));
             }

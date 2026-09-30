@@ -3,7 +3,7 @@ export const PROTOCOL_VERSION = 1;
 export type EntityKind = "player" | "bft_unit" | "bft_vehicle";
 export type Side = "west" | "east" | "independent" | "civilian" | "unknown";
 export type MarkerKind = "icon" | "rectangle" | "ellipse" | "polyline";
-export type CtabEdition = "none" | "original" | "devastator" | "unsupported";
+export type CtabEdition = "none" | "original" | "devastator" | "solar_60th" | "unsupported";
 
 export interface Point2 { x: number; y: number; }
 
@@ -66,7 +66,13 @@ export type TacticalEnvelope = SnapshotEnvelope | EntityDeltaEnvelope | Position
 const entityKinds = new Set<EntityKind>(["player", "bft_unit", "bft_vehicle"]);
 const sides = new Set<Side>(["west", "east", "independent", "civilian", "unknown"]);
 const markerKinds = new Set<MarkerKind>(["icon", "rectangle", "ellipse", "polyline"]);
-const ctabEditions = new Set<CtabEdition>(["none", "original", "devastator", "unsupported"]);
+const ctabEditions = new Set<CtabEdition>([
+  "none",
+  "original",
+  "devastator",
+  "solar_60th",
+  "unsupported"
+]);
 
 export function parseTacticalEnvelope(value: unknown): TacticalEnvelope | null {
   if (!isRecord(value)

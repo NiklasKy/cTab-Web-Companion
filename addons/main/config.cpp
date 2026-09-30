@@ -8,9 +8,9 @@ class CfgPatches
         requiredAddons[] = {};
         units[] = {};
         weapons[] = {};
-        version = "1.0.1";
-        versionStr = "1.0.1";
-        versionAr[] = { 1, 0, 1 };
+        version = "1.0.3";
+        versionStr = "1.0.3";
+        versionAr[] = { 1, 0, 3 };
     };
 };
 

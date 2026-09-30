@@ -61,6 +61,8 @@ pub enum CtabEdition {
     None,
     Original,
     Devastator,
+    #[serde(rename = "solar_60th")]
+    Solar60th,
     Unsupported,
 }
 
@@ -208,6 +210,8 @@ pub enum ValidationError {
     ProtocolVersion,
     #[error("a required identifier or text field is empty or too long")]
     InvalidText,
+    #[error("marker field '{0}' is empty, too long, or contains a null character")]
+    InvalidMarkerText(&'static str),
     #[error("a numeric coordinate, direction, size, or alpha is invalid")]
     InvalidNumber,
     #[error("a collection exceeds the protocol limit")]
@@ -292,14 +296,18 @@ impl EntityDelta {
 
 impl TacticalMarker {
     fn validate(&self) -> Result<(), ValidationError> {
-        validate_texts([&self.id, &self.color])?;
-        if !valid_optional_text(&self.label, MAX_TEXT_BYTES)
-            || !valid_optional_text(&self.marker_type, MAX_TEXT_BYTES)
-            || !valid_optional_text(&self.icon_path, MAX_TEXT_BYTES)
-            || !valid_optional_text(&self.overlay_icon_path, MAX_TEXT_BYTES)
-            || !valid_optional_text(&self.brush, MAX_TEXT_BYTES)
-        {
-            return Err(ValidationError::InvalidText);
+        for (field, value, required) in [
+            ("id", &self.id, true),
+            ("color", &self.color, true),
+            ("label", &self.label, false),
+            ("marker_type", &self.marker_type, false),
+            ("icon_path", &self.icon_path, false),
+            ("overlay_icon_path", &self.overlay_icon_path, false),
+            ("brush", &self.brush, false),
+        ] {
+            if !valid_optional_text(value, MAX_TEXT_BYTES) || (required && value.is_empty()) {
+                return Err(ValidationError::InvalidMarkerText(field));
+            }
         }
         validate_pose(self.position, self.direction)?;
         if !self.alpha.is_finite()
@@ -467,6 +475,21 @@ mod tests {
     }
 
     #[test]
+    fn solar_60th_edition_round_trips_with_the_public_protocol_name() {
+        let mut fixture = synthetic_snapshot();
+        let TacticalMessage::SessionSnapshot(snapshot) = &mut fixture.message else {
+            unreachable!()
+        };
+        snapshot.ctab_edition = CtabEdition::Solar60th;
+
+        let encoded = serde_json::to_string(&fixture).expect("solar fixture should encode");
+        assert!(encoded.contains(r#""ctab_edition":"solar_60th""#));
+        let decoded: Envelope =
+            serde_json::from_str(&encoded).expect("solar fixture should decode");
+        assert_eq!(decoded, fixture);
+    }
+
+    #[test]
     fn rejects_unknown_fields() {
         let value = serde_json::to_value(synthetic_snapshot()).expect("fixture should encode");
         let mut object = value.as_object().expect("envelope object").clone();
@@ -571,5 +594,17 @@ mod tests {
                 "browser controls must reject extra field: {extra_field}"
             );
         }
+    }
+
+    #[test]
+    fn invalid_marker_text_reports_only_the_field_name() {
+        let mut envelope = synthetic_snapshot();
+        let TacticalMessage::SessionSnapshot(snapshot) = &mut envelope.message else {
+            unreachable!()
+        };
+        snapshot.markers[0].label = "private label".repeat(100);
+        let error = envelope.validate().expect_err("oversized marker label");
+        assert_eq!(error, ValidationError::InvalidMarkerText("label"));
+        assert!(!error.to_string().contains("private label"));
     }
 }

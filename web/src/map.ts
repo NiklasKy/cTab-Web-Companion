@@ -629,19 +629,27 @@ export function resolveTacticalLabelCollisions(
   });
   candidates.sort((left, right) => right.priority - left.priority || left.key.localeCompare(right.key));
 
+  // Read geometry together, before applying visibility changes, to avoid repeated style/layout work.
+  const measured = candidates.map((candidate) => ({ ...candidate, bounds: candidate.visual.getBoundingClientRect() }));
+  const viewport = root.getBoundingClientRect();
   const occupied: DOMRect[] = [];
-  for (const candidate of candidates) {
-    const bounds = candidate.visual.getBoundingClientRect();
+  const hidden: HTMLElement[] = [];
+  for (const candidate of measured) {
+    const bounds = candidate.bounds;
     if (bounds.width <= 0 || bounds.height <= 0) {
       continue;
     }
+    if (viewport.width > 0 && viewport.height > 0
+      && (bounds.right < viewport.left || bounds.left > viewport.right
+        || bounds.bottom < viewport.top || bounds.top > viewport.bottom)) continue;
     const overlaps = occupied.some((other) => labelsConflict(bounds, other, safeThreshold));
     if (overlaps) {
-      candidate.visual.classList.add("tactical-label-collision-hidden");
+      hidden.push(candidate.visual);
     } else {
       occupied.push(bounds);
     }
   }
+  for (const visual of hidden) visual.classList.add("tactical-label-collision-hidden");
 }
 
 function labelsConflict(left: DOMRect, right: DOMRect, overlapThreshold: number): boolean {

@@ -6,7 +6,7 @@ private _capabilities = call CTabWeb_fnc_collectCapabilities;
 private _hasMap = _capabilities getOrDefault ["map", false];
 private _hasOwnPosition = _capabilities getOrDefault ["own_position", false];
 private _hasBft = _capabilities getOrDefault ["bft", false];
-if (_refreshCtab && { _hasBft } && { _edition in ["original", "devastator"] }) then {
+if (_refreshCtab && { _hasBft } && { _edition in ["original", "devastator", "solar_60th"] }) then {
     if (!isNil "cTab_fnc_updateLists" && { !isNil "cTab_player" } && { !isNull cTab_player }) then {
         call cTab_fnc_updateLists;
     };

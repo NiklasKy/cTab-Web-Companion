@@ -1,6 +1,7 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 import { appendText, replaceText } from "./dom";
+import { connectTacticalStream } from "./connection";
 import { applyEnvelope, type LiveState } from "./live-state";
 import { sortTacticalEntitiesByLabel } from "./panel";
 import {
@@ -10,7 +11,7 @@ import {
   type TacticalLayer,
   type TerrainStatus
 } from "./map";
-import { parseTacticalEnvelope, type SessionSnapshot } from "./protocol";
+import type { CtabEdition, SessionSnapshot, TacticalEnvelope } from "./protocol";
 
 const SESSION_TOKEN_KEY = "ctab-web-session-token";
 
@@ -135,7 +136,14 @@ if (token === null) {
     renderTerrainStatus,
     (following) => followPlayerButton.setAttribute("aria-pressed", String(following))
   );
-  connect(token);
+  connectTacticalStream(token, {
+    onStatus: setStatus,
+    onEnvelope: (envelope, firstSnapshot) => {
+      const previous = firstSnapshot ? null : liveState;
+      liveState = applyEnvelope(previous, envelope);
+      if (liveState !== previous && liveState !== null) scheduleRender(envelope.type);
+    }
+  });
   void refreshRuntimeStatus(token);
   window.setInterval(() => void refreshRuntimeStatus(token), 2_000);
 }
@@ -162,49 +170,33 @@ bindMapViewToggle(bftNamesButton, (visible) => tacticalMap?.setBftNamesVisible(v
 bindMapViewToggle(mutedMapButton, (muted) => tacticalMap?.setMapMuted(muted));
 diagnosticsButton.addEventListener("click", () => void copyDiagnostics());
 
-function connect(sessionToken: string): void {
-  const socketProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${socketProtocol}//${window.location.host}/ws`);
-  socket.addEventListener("open", () => {
-    socket.send(JSON.stringify({ type: "authenticate", token: sessionToken }));
-    setStatus("Authenticating", "waiting");
-  });
-  socket.addEventListener("message", (event: MessageEvent<unknown>) => {
-    if (typeof event.data !== "string" || event.data.length > 262_144) {
-      setStatus("Rejected invalid data", "error");
-      socket.close(1003, "invalid payload");
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(event.data) as unknown;
-    } catch {
-      setStatus("Rejected malformed data", "error");
-      return;
-    }
-    const envelope = parseTacticalEnvelope(parsed);
-    if (envelope !== null) {
-      const previous = liveState;
-      liveState = applyEnvelope(liveState, envelope);
-      if (liveState === previous || liveState === null) {
-        return;
-      }
-      if (envelope.type === "session_snapshot") {
-        renderSnapshot(liveState.snapshot);
-      } else if (envelope.type === "position_delta") {
-        tacticalMap?.updatePositions(liveState.snapshot);
-      } else if (envelope.type === "entity_delta") {
-        tacticalMap?.updateEntities(liveState.snapshot);
-        renderPanel(liveState.snapshot);
+let renderFrame: number | null = null;
+const pendingRenderTypes = new Set<TacticalEnvelope["type"]>();
+
+function scheduleRender(type: TacticalEnvelope["type"]): void {
+  pendingRenderTypes.add(type);
+  if (renderFrame !== null) return;
+  renderFrame = window.requestAnimationFrame(() => {
+    renderFrame = null;
+    const snapshot = liveState?.snapshot;
+    if (snapshot !== undefined) {
+      if (pendingRenderTypes.has("session_snapshot")) {
+        renderSnapshot(snapshot);
       } else {
-        tacticalMap?.updateMarkers(liveState.snapshot);
-        renderPanel(liveState.snapshot);
+        if (pendingRenderTypes.has("entity_delta")) {
+          tacticalMap?.updateEntities(snapshot);
+          renderPanel(snapshot);
+        } else if (pendingRenderTypes.has("position_delta")) {
+          tacticalMap?.updatePositions(snapshot);
+        }
+        if (pendingRenderTypes.has("marker_delta")) {
+          tacticalMap?.updateMarkers(snapshot);
+          replaceText(markerLayerCount, String(snapshot.markers.length));
+        }
       }
-      setStatus("Live · localhost", "connected");
     }
+    pendingRenderTypes.clear();
   });
-  socket.addEventListener("close", () => setStatus("Disconnected", "error"));
-  socket.addEventListener("error", () => setStatus("Connection error", "error"));
 }
 
 function renderSnapshot(snapshot: SessionSnapshot): void {
@@ -268,7 +260,7 @@ function renderTerrainStatus(terrainStatus: TerrainStatus): void {
 
 interface RuntimeStatus {
   connection: "live" | "waiting";
-  edition: "none" | "original" | "devastator" | "unsupported";
+  edition: CtabEdition;
   terrain: string | null;
   update_age_ms: number | null;
   heartbeat_timeout_ms: number;
@@ -285,7 +277,8 @@ async function refreshRuntimeStatus(sessionToken: string): Promise<void> {
   try {
     const response = await fetch(`/status/${encodeURIComponent(sessionToken)}`, {
       cache: "no-store",
-      credentials: "same-origin"
+      credentials: "same-origin",
+      signal: AbortSignal.timeout(5_000)
     });
     if (!response.ok) return;
     const value = await response.json() as unknown;
@@ -327,7 +320,7 @@ function isRuntimeStatus(value: unknown): value is RuntimeStatus {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   return (candidate.connection === "live" || candidate.connection === "waiting")
-    && ["none", "original", "devastator", "unsupported"].includes(String(candidate.edition))
+    && ["none", "original", "devastator", "solar_60th", "unsupported"].includes(String(candidate.edition))
     && (candidate.terrain === null || typeof candidate.terrain === "string")
     && (candidate.update_age_ms === null || (typeof candidate.update_age_ms === "number" && Number.isFinite(candidate.update_age_ms)))
     && typeof candidate.heartbeat_timeout_ms === "number"
@@ -352,6 +345,7 @@ function formatBytes(bytes: number): string {
 function editionLabel(edition: RuntimeStatus["edition"]): string {
   if (edition === "original") return "cTab Original";
   if (edition === "devastator") return "Devastator";
+  if (edition === "solar_60th") return "60th Solar AuxMod";
   if (edition === "unsupported") return "Unsupported";
   return "No cTab";
 }
